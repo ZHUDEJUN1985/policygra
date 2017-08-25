@@ -32,14 +32,15 @@ for i_episode in range(1000):
 
         RL.store_transition(observation, action, reward)
 
-        if i % 50 == 0:
+        if i % 200 == 0:
             print("i=%d" % i)
             print(action)
-            print(done)
         i += 1
         if done:
             ep_rs_sum = sum(RL.ep_rs)
+            print('*******************************')
             print(done)
+            print(action)
             print('*******************************')
 
             if 'running_reward' not in globals():
