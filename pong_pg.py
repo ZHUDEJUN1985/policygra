@@ -3,21 +3,23 @@ import tensorflow as tf
 
 
 class PolicyGradient(object):
-    def __init__(self, n_action, n_feature, learning_rate=0.01, gamma=0.95, output_graph=False):
+    def __init__(self, n_action, n_feature, learning_rate=0.01, gamma=0.99, output_graph=False):
         self.n_action = n_action
         self.n_feature = n_feature
         self.lr = learning_rate
         self.gamma = gamma
+        self.loss = 0
         self.ep_state, self.ep_action, self.ep_reward = [], [], []
 
         self._build_net()
 
         self.sess = tf.Session()
+        self.sess.run(tf.global_variables_initializer())
+        self.saver = tf.train.Saver()
+        self.restore_file = tf.train.latest_checkpoint('ckpt/pong_policy_gradient/')
 
         if output_graph:
             tf.summary.FileWriter('logs/', self.sess.graph)
-
-        self.sess.run(tf.global_variables_initializer())
 
     def _build_net(self):
         with tf.name_scope("inputs"):
@@ -37,10 +39,10 @@ class PolicyGradient(object):
 
         with tf.name_scope("loss"):
             prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=layer2, labels=self.tf_action)
-            loss = tf.reduce_mean(prob * self.tf_act_v)
+            self.loss = tf.reduce_mean(prob * self.tf_act_v)
 
         with tf.name_scope("train"):
-            self.train_op = tf.train.AdamOptimizer(self.lr).minimize(loss)
+            self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
     def choose_action(self, state):
         prob_act = self.sess.run(self.all_action_prob, feed_dict={self.tf_state: state[np.newaxis, :]})

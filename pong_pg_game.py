@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 
 RENDER = False
 D = 80 * 80
+is_train = True
 
 env = gym.make('Pong-v0')
 env.seed(1)
@@ -14,10 +15,14 @@ print(env.action_space)
 print(env.observation_space)
 
 RL = PolicyGradient(n_action=env.action_space.n, n_feature=env.observation_space.shape[0], learning_rate=0.01,
-                    gamma=0.95)
+                    gamma=0.99)
+
+if is_train:
+    model_file = RL.restore_file
+    RL.saver.restore(RL.sess, model_file)
 
 
-def preprocess(I):
+def pre_process(I):
     I = I[35:195]
     I = I[::2, ::2, 0]
     I[I == 144] = 0
@@ -25,17 +30,17 @@ def preprocess(I):
     I[I != 0] = 1
     return I.astype(np.float).ravel()
 
-
-for i_episode in range(3000):
+for i_episode in range(2000):
     observation = env.reset()
     running_reward = 0
     i = 0
     pre_state = None
+    acc_reward = 0
     while True:
         if RENDER:
             env.render()
 
-        cur_state = preprocess(observation)
+        cur_state = pre_process(observation)
         x = cur_state - pre_state if pre_state is not None else np.zeros(D)
         pre_state = cur_state
 
@@ -43,11 +48,9 @@ for i_episode in range(3000):
 
         observation_next, reward, done, info = env.step(action)
         RL.store_transition(x, action, reward)
+        acc_reward += reward
 
         i += 1
-        if i % 200 == 0:
-            print("i=%d, action=%d" % (i, action))
-
         if done:
             episode_reward_sum = sum(RL.ep_reward)
 
@@ -59,9 +62,15 @@ for i_episode in range(3000):
             if running_reward > -100:
                 RENDER = True
 
-            print("episode:", i_episode, "  reward:", int(running_reward))
+            print("i=%d" % i)
+            print("episode:", i_episode, "  reward:", int(running_reward), "  acc_reward:", acc_reward)
 
             action_value = RL.learn()
+
+            if is_train:
+                print("learn_value=", sum(action_value))
+                print("****************************")
+                RL.saver.save(RL.sess, 'ckpt/pong_policy_gradient/pong_pg.ckpt')
 
             if i_episode == 100:
                 plt.plot(action_value)

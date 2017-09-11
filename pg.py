@@ -12,12 +12,13 @@ class PolicyGradient:
 
         self._build_net()
 
-        self.sess = tf.Session()
+        self.sess = tf.InteractiveSession()
+        self.sess.run(tf.global_variables_initializer())
+        self.saver = tf.train.Saver()
+        self.restore_file = tf.train.latest_checkpoint('ckpt/car_pole/')
 
         if output_graph:
             tf.summary.FileWriter('logs/', self.sess.graph)
-
-        self.sess.run(tf.global_variables_initializer())
 
     def _build_net(self):
         with tf.name_scope("inputs"):

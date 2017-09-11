@@ -3,27 +3,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import gym
 
-EP_MAX = 2000
-EP_LEN = 200
 GAMMA = 0.9
 A_LR = 0.0001
 C_LR = 0.0002
 BATCH = 32
 A_UPDATE_STEPS = 10
 C_UPDATE_STEPS = 10
-S_DIM, A_DIM = 3, 1
+A_DIM = 1
+D = 80 * 80
+is_train = False
+RENDER = False
 METHOD = [dict(name='kl_pen', kl_target=0.01, lam=0.5),  # KL penalty
           dict(name='clip', epsilon=0.2)][1]
-          # Clipped surrogate objective, find this is better choose the method for optimization
 
 
 class PPO(object):
     def __init__(self):
         self.sess = tf.Session()
-        self.tfs = tf.placeholder(tf.float32, [None, S_DIM], 'state')
+        self.tfs = tf.placeholder(tf.float32, [None, 6400], 'state')
 
         # critic
-        with tf.variable_scope('critic'):
+        with tf.name_scope('critic'):
             l1 = tf.layers.dense(self.tfs, 100, tf.nn.relu)
             self.v = tf.layers.dense(l1, 1)
             self.tfdc_r = tf.placeholder(tf.float32, [None, 1], 'discounted_r')
@@ -34,15 +34,15 @@ class PPO(object):
         # actor
         pi, pi_params = self._build_anet('pi', trainable=True)
         oldpi, oldpi_params = self._build_anet('oldpi', trainable=False)
-        with tf.variable_scope('sample_action'):
+        with tf.name_scope('sample_action'):
             self.sample_op = tf.squeeze(pi.sample(1), axis=0)  # choosing action
-        with tf.variable_scope('update_oldpi'):
+        with tf.name_scope('update_oldpi'):
             self.update_oldpi_op = [oldp.assign(p) for p, oldp in zip(pi_params, oldpi_params)]
 
         self.tfa = tf.placeholder(tf.float32, [None, A_DIM], 'action')
         self.tfadv = tf.placeholder(tf.float32, [None, 1], 'advantage')
-        with tf.variable_scope('loss'):
-            with tf.variable_scope('surrogate'):
+        with tf.name_scope('loss'):
+            with tf.name_scope('surrogate'):
                 # ratio = tf.exp(pi.log_prob(self.tfa) - oldpi.log_prob(self.tfa))
                 ratio = pi.prob(self.tfa) / oldpi.prob(self.tfa)
                 surr = ratio * self.tfadv
@@ -56,12 +56,14 @@ class PPO(object):
                     surr,
                     tf.clip_by_value(ratio, 1. - METHOD['epsilon'], 1. + METHOD['epsilon']) * self.tfadv))
 
-        with tf.variable_scope('atrain'):
+        with tf.name_scope('atrain'):
             self.atrain_op = tf.train.AdamOptimizer(A_LR).minimize(self.aloss)
 
-        tf.summary.FileWriter("log/", self.sess.graph)
+        # tf.summary.FileWriter("log/", self.sess.graph)
 
         self.sess.run(tf.global_variables_initializer())
+        self.saver = tf.train.Saver()
+        self.restore_file = tf.train.latest_checkpoint('ckpt/pong_ppo/')
 
     def update(self, s, a, r):
         self.sess.run(self.update_oldpi_op)
@@ -70,6 +72,7 @@ class PPO(object):
 
         # update actor
         if METHOD['name'] == 'kl_pen':
+            kl = 0.0
             for _ in range(A_UPDATE_STEPS):
                 _, kl = self.sess.run(
                     [self.atrain_op, self.kl_mean],
@@ -88,11 +91,11 @@ class PPO(object):
         [self.sess.run(self.ctrain_op, {self.tfs: s, self.tfdc_r: r}) for _ in range(C_UPDATE_STEPS)]
 
     def _build_anet(self, name, trainable):
-        with tf.variable_scope(name):
+        with tf.name_scope(name):
             l1 = tf.layers.dense(self.tfs, 100, tf.nn.relu, trainable=trainable)
             mu = 2 * tf.layers.dense(l1, A_DIM, tf.nn.tanh, trainable=trainable)
             sigma = tf.layers.dense(l1, A_DIM, tf.nn.softplus, trainable=trainable)
-            norm_dist = tf.distributions.Normal(loc=mu, scale=sigma)
+            norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma)
         params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=name)
         return norm_dist, params
 
@@ -102,7 +105,8 @@ class PPO(object):
         return np.clip(a, -2, 2)
 
     def get_v(self, s):
-        if s.ndim < 2: s = s[np.newaxis, :]
+        if s.ndim < 2:
+            s = s[np.newaxis, :]
         return self.sess.run(self.v, {self.tfs: s})[0, 0]
 
 
@@ -110,39 +114,49 @@ env = gym.make('Pong-v0')
 env.seed(1)
 env.unwrapped
 
-def preprocess(I):
+
+def pre_process(I):
     I = I[35:195]
-    I = I[::2,::2,0]
-    I[I==144] = 0
-    I[I==109] = 0
-    I[I!=0] = 1
+    I = I[::2, ::2, 0]
+    I[I == 144] = 0
+    I[I == 109] = 0
+    I[I != 0] = 1
     return I.astype(np.float).ravel()
 
+
 ppo = PPO()
+s_dim = env.observation_space.shape[0]
+a_dim = env.action_space.n
+print(s_dim)
+print(a_dim)
+
 all_ep_r = []
-for ep in range(EP_MAX):
+for ep in range(3000):
     observation = env.reset()
     buffer_s, buffer_a, buffer_r = [], [], []
     ep_reward = 0
     pre_state = None
-    for t in range(EP_LEN):  # in one episode
-        env.render()
+    for t in range(200):  # in one episode
+        # if RENDER:
+        #    env.render()
 
-        cur_state = preprocess(observation)
+        cur_state = pre_process(observation)
         x = cur_state - pre_state if pre_state is not None else np.zeros(D)
         pre_state = cur_state
 
         a = ppo.choose_action(x)
-        s_, r, done, _ = env.step(a)
-        buffer_s.append(observation)
+        s_, r, done, _ = env.step(int(a))
+        buffer_s.append(x)
         buffer_a.append(a)
         buffer_r.append((r + 8) / 8)  # normalize reward, find to be useful
         observation = s_
         ep_reward += r
 
         # update ppo
-        if (t + 1) % BATCH == 0 or t == EP_LEN - 1:
-            v_s_ = ppo.get_v(s_)
+        if (t + 1) % BATCH == 0 or t == 199:
+            s_pre = pre_process(s_)
+            x_ = s_pre - cur_state
+            v_s_ = ppo.get_v(x_)
             discounted_r = []
             for r in buffer_r[::-1]:
                 v_s_ = r + GAMMA * v_s_
@@ -152,17 +166,22 @@ for ep in range(EP_MAX):
             bs, ba, br = np.vstack(buffer_s), np.vstack(buffer_a), np.array(discounted_r)[:, np.newaxis]
             buffer_s, buffer_a, buffer_r = [], [], []
             ppo.update(bs, ba, br)
+            ppo.saver.save(ppo.sess, 'ckpt/pong_ppo/ppo.ckpt')
+            print("t=%d , reward=%.2f" % (t, ep_reward))
+
     if ep == 0:
         all_ep_r.append(ep_reward)
     else:
         all_ep_r.append(all_ep_r[-1] * 0.9 + ep_reward * 0.1)
-    print(
-        'Ep: %i' % ep,
-        "|Ep_r: %i" % ep_reward,
-        ("|Lam: %.4f" % METHOD['lam']) if METHOD['name'] == 'kl_pen' else '',
-    )
+
+    # if ep_reward > -30:
+    #    RENDER = True
+
+    print('Ep: %i' % ep, "|Ep_r: %i" % ep_reward,
+          ("|Lam: %.4f" % METHOD['lam']) if METHOD['name'] == 'kl_pen' else '')
+    print('**********************************')
 
 plt.plot(np.arange(len(all_ep_r)), all_ep_r)
-plt.xlabel('Episode');
-plt.ylabel('Moving averaged episode reward');
+plt.xlabel('Episode')
+plt.ylabel('Moving averaged episode reward')
 plt.show()
