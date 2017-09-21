@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import gym
+import random
 
 GAMMA = 0.9
 A_LR = 0.0001
@@ -11,8 +12,8 @@ A_UPDATE_STEPS = 10
 C_UPDATE_STEPS = 10
 A_DIM = 1
 D = 80 * 80
-is_train = False
-RENDER = False
+is_train = True
+RENDER = True
 METHOD = [dict(name='kl_pen', kl_target=0.01, lam=0.5),  # KL penalty
           dict(name='clip', epsilon=0.2)][1]
 
@@ -92,9 +93,15 @@ class PPO(object):
 
     def _build_anet(self, name, trainable):
         with tf.name_scope(name):
-            l1 = tf.layers.dense(self.tfs, 100, tf.nn.relu, trainable=trainable)
-            mu = 2 * tf.layers.dense(l1, A_DIM, tf.nn.tanh, trainable=trainable)
-            sigma = tf.layers.dense(l1, A_DIM, tf.nn.softplus, trainable=trainable)
+            l1 = tf.layers.dense(inputs=self.tfs, units=100, activation=tf.nn.relu,
+                                 kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
+                                 bias_initializer=tf.constant_initializer(0.1), trainable=trainable)
+            mu = 2 * tf.layers.dense(inputs=l1, units=1, activation=tf.nn.tanh,
+                                     kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
+                                     bias_initializer=tf.constant_initializer(0.1), trainable=trainable)
+            sigma = tf.layers.dense(inputs=l1, units=1, activation=tf.nn.softplus,
+                                    kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
+                                    bias_initializer=tf.constant_initializer(0.1), trainable=trainable)
             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma)
         params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=name)
         return norm_dist, params
@@ -102,7 +109,8 @@ class PPO(object):
     def choose_action(self, s):
         s = s[np.newaxis, :]
         a = self.sess.run(self.sample_op, {self.tfs: s})[0]
-        return np.clip(a, -2, 2)
+        act = np.clip(np.random.normal(a, 3), -2, 2)
+        return act
 
     def get_v(self, s):
         if s.ndim < 2:
@@ -130,6 +138,10 @@ a_dim = env.action_space.n
 print(s_dim)
 print(a_dim)
 
+if is_train:
+    model_file = ppo.restore_file
+    ppo.saver.restore(ppo.sess, model_file)
+
 all_ep_r = []
 for ep in range(3000):
     observation = env.reset()
@@ -138,17 +150,18 @@ for ep in range(3000):
     pre_state = None
     for t in range(200):  # in one episode
         # if RENDER:
-        #    env.render()
+        # env.render()
 
         cur_state = pre_process(observation)
         x = cur_state - pre_state if pre_state is not None else np.zeros(D)
         pre_state = cur_state
 
         a = ppo.choose_action(x)
-        s_, r, done, _ = env.step(int(a))
+        a_step = int(a)
+        s_, r, done, _ = env.step(a_step)
         buffer_s.append(x)
-        buffer_a.append(a)
-        buffer_r.append((r + 8) / 8)  # normalize reward, find to be useful
+        buffer_a.append(a_step)
+        buffer_r.append((r + 8.0) / 8.0)  # normalize reward, find to be useful
         observation = s_
         ep_reward += r
 
@@ -167,19 +180,16 @@ for ep in range(3000):
             buffer_s, buffer_a, buffer_r = [], [], []
             ppo.update(bs, ba, br)
             ppo.saver.save(ppo.sess, 'ckpt/pong_ppo/ppo.ckpt')
-            print("t=%d , reward=%.2f" % (t, ep_reward))
+
+    print("ep=%d , reward=%.2f" % (ep, ep_reward))
 
     if ep == 0:
         all_ep_r.append(ep_reward)
     else:
         all_ep_r.append(all_ep_r[-1] * 0.9 + ep_reward * 0.1)
 
-    # if ep_reward > -30:
-    #    RENDER = True
-
-    print('Ep: %i' % ep, "|Ep_r: %i" % ep_reward,
-          ("|Lam: %.4f" % METHOD['lam']) if METHOD['name'] == 'kl_pen' else '')
-    print('**********************************')
+        # if ep_reward > -30:
+        #     RENDER = True
 
 plt.plot(np.arange(len(all_ep_r)), all_ep_r)
 plt.xlabel('Episode')

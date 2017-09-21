@@ -4,26 +4,21 @@ import tensorflow as tf
 
 tf.GraphKeys.VARIABLES = tf.GraphKeys.GLOBAL_VARIABLES
 
-# LR_A = 0.001  # learning rate for actor
-# LR_C = 0.002  # learning rate for critic
-# GAMMA = 0.95  # reward discount
-# TAU = 0.01  # soft replacement
 MEMORY_CAPACITY = 10000
 BATCH_SIZE = 32
 D = 80 * 80
-
 RENDER = False
-is_train = True
+is_train = False
 
 
 class DDPG(object):
     def __init__(self, a_dim, s_dim, lr_a, lr_c, gamma, tau):
         self.memory = np.zeros((MEMORY_CAPACITY, s_dim * 2 + 2), dtype=np.float32)
         self.pointer = 0
-        self.lr_actor = lr_a
-        self.lr_critic = lr_c
-        self.gamma = gamma
-        self.tau = tau
+        self.lr_actor = lr_a     # learning rate for actor
+        self.lr_critic = lr_c    # learning rate for critic
+        self.gamma = gamma       # reward discount
+        self.tau = tau           # soft replacement
         self.a_replace_counter, self.c_replace_counter = 0, 0
 
         self.a_dim, self.s_dim = a_dim, s_dim
@@ -47,15 +42,16 @@ class DDPG(object):
         self.ct_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='Critic/target')
 
         # target net replacement
-        self.soft_replace = [[tf.assign(ta, (1 - self.tau) * ta + self.tau * ea), tf.assign(tc, (1 - self.tau) * tc + self.tau * ec)]
-                             for ta, ea, tc, ec in zip(self.at_params, self.ae_params, self.ct_params, self.ce_params)]
+        self.soft_replace = [
+            [tf.assign(ta, (1 - self.tau) * ta + self.tau * ea), tf.assign(tc, (1 - self.tau) * tc + self.tau * ec)]
+            for ta, ea, tc, ec in zip(self.at_params, self.ae_params, self.ct_params, self.ce_params)]
 
         q_target = self.R + self.gamma * q_
         # in the feed_dic for the td_error, the self.a should change to actions in memory
         td_error = tf.losses.mean_squared_error(labels=q_target, predictions=q)
         self.ctrain = tf.train.AdamOptimizer(self.lr_critic).minimize(td_error, var_list=self.ce_params)
 
-        a_loss = - tf.reduce_mean(q)    # maximize the q
+        a_loss = - tf.reduce_mean(q)  # maximize the q
         self.atrain = tf.train.AdamOptimizer(self.lr_actor).minimize(a_loss, var_list=self.ae_params)
 
         self.sess = tf.Session()
@@ -88,13 +84,17 @@ class DDPG(object):
 
     def _build_a(self, s, scope, trainable):
         with tf.variable_scope(scope):
-            net = tf.layers.dense(s, 30, activation=tf.nn.relu, name='l1', trainable=trainable)
-            a = tf.layers.dense(net, 1, activation=tf.nn.tanh, name='a', trainable=trainable)
+            net = tf.layers.dense(inputs=s, units=100, activation=tf.nn.relu,
+                                  kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
+                                  bias_initializer=tf.constant_initializer(0.1), name='l1', trainable=trainable)
+            a = tf.layers.dense(inputs=net, units=1, activation=tf.nn.tanh,
+                                kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.3),
+                                bias_initializer=tf.constant_initializer(0.1), name='a', trainable=trainable)
             return a
 
     def _build_c(self, s, a, scope, trainable):
         with tf.variable_scope(scope):
-            n_l1 = 30
+            n_l1 = 100
             w1_s = tf.get_variable('w1_s', [self.s_dim, n_l1], trainable=trainable)
             w1_a = tf.get_variable('w1_a', [1, n_l1], trainable=trainable)
             b1 = tf.get_variable('b1', [1, n_l1], trainable=trainable)
@@ -108,7 +108,6 @@ env.seed(1)
 
 s_dim = env.observation_space.shape[0]
 a_dim = env.action_space.n
-# a_bound = env.action_space.high
 print(s_dim)
 print(a_dim)
 
@@ -134,8 +133,8 @@ for i in range(3000):
     ep_reward = 0
     pre_state = None
     for j in range(200):
-        if RENDER:
-            env.render()
+        # if RENDER:
+        #    env.render()
 
         # Add exploration noise
         cur_state = pre_process(observation)
@@ -160,11 +159,7 @@ for i in range(3000):
 
         if j == 10:
             print("act=%d, r=%.2f" % (action_step, r))
-        elif j == 30:
-            print("act=%d, r=%.2f" % (action_step, r))
         elif j == 50:
-            print("act=%d, r=%.2f" % (action_step, r))
-        elif j == 100:
             print("act=%d, r=%.2f" % (action_step, r))
         elif j == 150:
             print("act=%d, r=%.2f" % (action_step, r))
@@ -173,6 +168,6 @@ for i in range(3000):
             print('Episode:', i, ' Reward: %.2f' % ep_reward, 'Explore: %.2f' % var)
             print('**************************************')
             ddpg.saver.save(ddpg.sess, 'ckpt/pong_deterministic_pg/ddpg.ckpt')
-            if ep_reward > -30:
-                RENDER = True
+            # if ep_reward > -30:
+            #    RENDER = True
             break
